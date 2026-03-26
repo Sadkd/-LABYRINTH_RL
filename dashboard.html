@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Labyrinth RL — Live Training</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+/* ── PALETTE: clean light theme ───────────────────── */
+:root {
+  --bg:       #f0f4ff;   /* soft cool white */
+  --bg2:      #ffffff;   /* pure white panels */
+  --surf:     #ffffff;   /* card surface */
+  --surf2:    #f5f7ff;   /* inner surface */
+  --brd:      #dde2f0;   /* light border */
+  --brd2:     #c8d0e8;   /* slightly deeper border */
+
+  --tq:       #0d9f82;   /* deep teal */
+  --dqn:      #e0355e;   /* vivid rose */
+  --yel:      #d97706;   /* amber-orange */
+  --lav:      #6d44e8;   /* indigo-violet */
+  --sky:      #2563eb;   /* blue */
+
+  --txt:      #1a1e35;   /* near-black */
+  --txt2:     #3d4466;   /* muted dark */
+  --dim:      #7a84aa;   /* dimmed */
+
+  --glow-tq:  0 2px 12px #0d9f8225;
+  --glow-dqn: 0 2px 12px #e0355e25;
+  --glow-lav: 0 2px 12px #6d44e820;
+
+  --r: 10px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  font-family: 'Inter', sans-serif;
+  background: var(--bg);
+  color: var(--txt);
+}
+
+/* soft top-left accent glow */
+body::before {
+  content: '';
+  position: fixed;
+  top: -80px; left: -60px;
+  width: 500px; height: 400px;
+  background: radial-gradient(ellipse, rgba(109,68,232,.05) 0%, transparent 70%);
+  pointer-events: none; z-index: 0;
+}
+
+/* ── OUTER SHELL: fixed viewport grid ──────────────────── */
+#app {
+  position: relative; z-index: 1;
+  display: grid;
+  grid-template-rows: 48px 1fr;
+  height: 100vh;
+  width: 100vw;
+}
+
+/* ── HEADER ─────────────────────────────────────────────── */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  background: rgba(255,255,255,.92);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 1px 0 var(--brd);
+  border-bottom: 1px solid var(--brd);
+  gap: 12px;
+}
+
+.logo {
+  display: flex; align-items: center; gap: 10px;
+}
+.logo-icon {
+  width: 22px; height: 22px;
+  background: linear-gradient(135deg, var(--tq), var(--lav));
+  border-radius: 5px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px;
+}
+.logo h1 {
+  font-family: 'Orbitron', monospace;
+  font-size: 13px; font-weight: 900;
+  letter-spacing: .12em;
+  background: linear-gradient(90deg, var(--tq), var(--lav));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  filter: none;
+}
+.logo-sub {
+  font-size: 10px; color: var(--dim);
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: .06em;
+}
+
+.hright { display: flex; align-items: center; gap: 10px; }
+
+.conn {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; padding: 4px 12px;
+  border-radius: 20px;
+  display: flex; align-items: center; gap: 6px;
+  background: var(--surf2); border: 1px solid var(--brd);
+  color: var(--dim); transition: all .35s;
+}
+.conn.ok  { background: #e8faf5; border-color: var(--tq); color: var(--tq); }
+.conn.err { background: #fdeef2; border-color: var(--dqn); color: var(--dqn); }
+.cdot { width: 6px; height: 6px; border-radius: 50%; background: var(--dim); animation: blink 1.5s ease-in-out infinite; }
+.conn.ok  .cdot { background: var(--tq); box-shadow: 0 0 6px var(--tq); }
+.conn.err .cdot { background: var(--dqn); box-shadow: 0 0 6px var(--dqn); }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.25} }
+
+/* ── BODY GRID ───────────────────────────────────────────── */
+#body {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  overflow: hidden;
+  height: 100%;
+}
+
+/* ── LEFT PANEL ─────────────────────────────────────────── */
+#left {
+  display: flex; flex-direction: column;
+  border-right: 1px solid var(--brd);
+  background: var(--bg2);
+  overflow: hidden;
+}
+
+/* controls section */
+.ctrl-section {
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--brd);
+  flex-shrink: 0;
+}
+
+.ctrl-row { display: flex; gap: 7px; margin-bottom: 8px; flex-wrap: wrap; }
+
+.ep-sel {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  padding: 6px 10px; background: var(--surf2); border: 1px solid var(--brd2);
+  color: var(--txt); border-radius: 6px; cursor: pointer; width: 100%;
+}
+.ep-sel option { background: var(--surf2); }
+
+.btn {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+  padding: 7px 12px; border-radius: 6px; cursor: pointer; border: none;
+  transition: all .18s; white-space: nowrap; flex: 1;
+}
+.btn-tq  { background: #e8faf5; border: 1px solid var(--tq);  color: var(--tq); }
+.btn-dqn { background: #fdeef2; border: 1px solid var(--dqn); color: var(--dqn); }
+.btn-stop{ background: #fef3e2; border: 1px solid var(--yel); color: var(--yel); }
+.btn-tq:hover:not(:disabled)  { background: #c8f5ea; box-shadow: var(--glow-tq); }
+.btn-dqn:hover:not(:disabled) { background: #fbd5df; box-shadow: var(--glow-dqn); }
+.btn-stop:hover:not(:disabled){ background: #fde8c0; }
+.btn:disabled { opacity: .3; cursor: not-allowed; }
+
+/* progress bar */
+.prog-wrap { margin-top: 6px; }
+.prog-lbl { display: flex; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--dim); margin-bottom: 4px; }
+.prog-bg { background: var(--brd); height: 4px; border-radius: 2px; overflow: hidden; }
+.prog-fill { height: 100%; border-radius: 2px; width: 0%; transition: width .2s; background: linear-gradient(90deg, var(--tq), var(--lav)); }
+.prog-fill.dqn { background: linear-gradient(90deg, var(--dqn), var(--yel)); }
+
+/* maze area */
+.maze-section {
+  flex: 1;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 10px 14px;
+  gap: 8px;
+  overflow: hidden;
+}
+
+#mazeC {
+  border-radius: var(--r);
+  border: 1px solid var(--brd2);
+  display: block;
+}
+
+/* status tags — compact single row */
+.tags {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 5px; width: 100%;
+}
+.tag {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  padding: 4px 7px; border-radius: 5px;
+  background: var(--surf); border: 1px solid var(--brd);
+  color: var(--dim); text-align: center; line-height: 1.4;
+}
+.tag b { display: block; color: var(--txt); font-weight: 500; font-size: 10px; }
+
+/* ── RIGHT PANEL ────────────────────────────────────────── */
+#right {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* top strip: metrics row */
+.metrics-strip {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0;
+  border-bottom: 1px solid var(--brd);
+  flex-shrink: 0;
+}
+.mbox {
+  padding: 10px 14px;
+  border-right: 1px solid var(--brd);
+  text-align: center;
+}
+.mbox:last-child { border-right: none; }
+.mval {
+  font-family: 'Orbitron', monospace;
+  font-size: 18px; font-weight: 700;
+  display: block; line-height: 1.1; margin-bottom: 3px;
+}
+.mlbl { font-size: 9px; color: var(--dim); font-family: 'JetBrains Mono', monospace; letter-spacing: .08em; text-transform: uppercase; }
+.c-tq  { color: var(--tq);  text-shadow: var(--glow-tq); }
+.c-dqn { color: var(--dqn); text-shadow: var(--glow-dqn); }
+.c-lav { color: var(--lav); }
+
+/* tabbed panel */
+.tab-shell {
+  display: grid;
+  grid-template-rows: 36px 1fr;
+  overflow: hidden;
+}
+.tab-bar {
+  display: flex; align-items: stretch;
+  border-bottom: 1px solid var(--brd);
+  padding: 0 16px;
+  gap: 2px;
+  background: var(--bg2);
+  flex-shrink: 0;
+}
+.tab {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: .08em; text-transform: uppercase;
+  padding: 0 16px; cursor: pointer;
+  border: none; background: transparent;
+  color: var(--dim); border-bottom: 2px solid transparent;
+  transition: all .18s; margin-bottom: -1px;
+}
+.tab:hover { color: var(--txt2); }
+.tab.active { color: var(--lav); border-bottom-color: var(--lav); font-weight: 600; }
+
+.tab-panels { overflow: hidden; position: relative; }
+.tab-panel { display: none; height: 100%; padding: 14px 16px; overflow: hidden; }
+.tab-panel.active { display: flex; flex-direction: column; gap: 10px; }
+
+/* charts tab */
+.charts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 12px;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+.chart-card {
+  background: var(--surf);
+  border: 1px solid var(--brd);
+  border-radius: var(--r);
+  padding: 10px 12px;
+  display: flex; flex-direction: column;
+  min-height: 0; overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
+}
+.chart-card.wide { grid-column: 1 / -1; }
+.chart-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; letter-spacing: .2em; text-transform: uppercase;
+  color: var(--dim); margin-bottom: 7px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 10px;
+}
+.chart-title::after { content: ''; flex: 1; height: 1px; background: var(--brd); }
+.leg { display: flex; gap: 14px; flex-shrink: 0; }
+.leg-i { display: flex; align-items: center; gap: 5px; font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--dim); }
+.leg-l { width: 20px; height: 2px; border-radius: 1px; }
+.chart-wrap { flex: 1; min-height: 0; position: relative; }
+canvas.ch { width: 100% !important; height: 100% !important; }
+
+/* policy tab */
+.policy-tab-inner {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+#policyC {
+  border-radius: var(--r);
+  border: 1px solid var(--brd2);
+  height: 100%; width: auto;
+  max-height: 100%;
+}
+.policy-info {
+  display: flex; flex-direction: column; gap: 10px;
+  overflow-y: auto;
+}
+.pinfo-card {
+  background: var(--surf);
+  border: 1px solid var(--brd);
+  border-radius: var(--r);
+  padding: 12px 14px;
+}
+.pinfo-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; letter-spacing: .18em; text-transform: uppercase;
+  color: var(--dim); margin-bottom: 8px;
+}
+.pinfo-legend { display: flex; flex-direction: column; gap: 5px; }
+.pleg-row {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 11px; color: var(--txt2);
+}
+.pleg-sym { font-size: 14px; width: 20px; text-align: center; }
+
+/* algo comparison in policy tab */
+.algo-table { width: 100%; border-collapse: collapse; font-family: 'JetBrains Mono', monospace; font-size: 10px; }
+.algo-table th { background: var(--surf2); border: 1px solid var(--brd); padding: 7px 10px; color: var(--dim); font-size: 9px; letter-spacing: .1em; text-transform: uppercase; text-align: left; }
+.algo-table td { border: 1px solid var(--brd); padding: 7px 10px; vertical-align: middle; }
+.algo-table tr:nth-child(even) td { background: var(--surf2); }
+
+/* log tab */
+.log-wrap {
+  flex: 1; min-height: 0; overflow-y: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; line-height: 1.75;
+  color: var(--dim);
+}
+.log-wrap::-webkit-scrollbar { width: 4px; }
+.log-wrap::-webkit-scrollbar-thumb { background: var(--brd); border-radius: 2px; }
+.ll { padding: 1px 0; border-bottom: 1px solid var(--brd); }
+.ll.ok   { color: var(--tq); }
+.ll.fail { color: var(--dqn); }
+.ll.trap { color: var(--yel); }
+.ll.sys  { color: var(--lav); }
+/* grid size toggle */
+.grid-toggle {
+  display: flex; gap: 4px; width: 100%; margin-bottom: 8px;
+}
+.btn-grid {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: .04em;
+  padding: 6px 0; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--brd2); background: var(--surf2);
+  color: var(--dim); transition: all .18s; flex: 1; text-align: center;
+}
+.btn-grid:hover { border-color: var(--lav); color: var(--lav); }
+.btn-grid.active {
+  background: #ede9ff; border-color: var(--lav);
+  color: var(--lav); font-weight: 600;
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── HEADER ── -->
+  <header>
+    <div class="logo">
+      <div class="logo-icon">⬡</div>
+      <h1>LABYRINTH RL</h1>
+      <span class="logo-sub">Python → WebSocket → Live Visualization</span>
+    </div>
+    <div class="hright">
+      <div class="conn" id="connBadge">
+        <div class="cdot" id="connDot"></div>
+        <span id="connTxt">Connecting…</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── BODY ── -->
+  <div id="body">
+
+    <!-- LEFT: controls + maze -->
+    <div id="left">
+      <div class="ctrl-section">
+        <select class="ep-sel" id="epSel" style="margin-bottom:8px">
+          <option value="300">300 episodes</option>
+          <option value="500">500 episodes</option>
+          <option value="800">800 episodes</option>
+        </select>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--dim);letter-spacing:.1em;text-transform:uppercase;margin-bottom:5px">Grid Size</div>
+        <div class="grid-toggle">
+          <button class="btn-grid active" id="grid5"  data-size="5x5"   onclick="setGridSize('5x5',  this)">5 × 5</button>
+          <button class="btn-grid"        id="grid8"  data-size="8x8"   onclick="setGridSize('8x8',  this)">8 × 8</button>
+          <button class="btn-grid"        id="grid10" data-size="10x10" onclick="setGridSize('10x10',this)">10 × 10</button>
+        </div>
+        <div class="ctrl-row">
+          <button class="btn btn-tq"   id="btnTQ"   onclick="startTraining('tabular')" disabled>▶ Tabular Q</button>
+          <button class="btn btn-dqn"  id="btnDQN"  onclick="startTraining('dqn')"     disabled>▶ DQN</button>
+          <button class="btn btn-stop" id="btnStop" onclick="sendStop()"               disabled>■ Stop</button>
+        </div>
+        <div class="prog-wrap" id="progWrap" style="visibility:hidden">
+          <div class="prog-lbl"><span id="progLbl">—</span><span id="progFrac">—</span></div>
+          <div class="prog-bg"><div class="prog-fill" id="progFill"></div></div>
+        </div>
+      </div>
+
+      <div class="maze-section">
+        <canvas id="mazeC" width="272" height="272"></canvas>
+        <div class="tags">
+          <div class="tag">AGENT<b id="tAgent">—</b></div>
+          <div class="tag">POS<b id="tPos">—</b></div>
+          <div class="tag">STEP<b id="tStep">—</b></div>
+          <div class="tag">EP<b id="tEp">—</b></div>
+          <div class="tag">ε<b id="tEps">—</b></div>
+          <div class="tag">STATUS<b id="tStatus">IDLE</b></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: metrics + tabbed panels -->
+    <div id="right">
+
+      <!-- metrics strip -->
+      <div class="metrics-strip">
+        <div class="mbox"><span class="mval c-tq"  id="m-tq-sr">—</span><span class="mlbl">TQ Success</span></div>
+        <div class="mbox"><span class="mval c-tq"  id="m-tq-st">—</span><span class="mlbl">TQ Avg Steps</span></div>
+        <div class="mbox"><span class="mval c-tq"  id="m-tq-ep">0</span><span class="mlbl">TQ Episodes</span></div>
+        <div class="mbox"><span class="mval c-dqn" id="m-dq-sr">—</span><span class="mlbl">DQN Success</span></div>
+        <div class="mbox"><span class="mval c-dqn" id="m-dq-st">—</span><span class="mlbl">DQN Avg Steps</span></div>
+        <div class="mbox"><span class="mval c-dqn" id="m-dq-ep">0</span><span class="mlbl">DQN Episodes</span></div>
+      </div>
+
+      <!-- tab bar + panels -->
+      <div class="tab-shell">
+        <div class="tab-bar">
+          <button class="tab active" onclick="switchTab('charts',this)">📈 Charts</button>
+          <button class="tab"        onclick="switchTab('policy',this)">🗺 Policy Map</button>
+          <button class="tab"        onclick="switchTab('log',this)">📋 Episode Log</button>
+          <button class="tab"        onclick="switchTab('algo',this)">⚖ Comparison</button>
+        </div>
+
+        <div class="tab-panels">
+
+          <!-- CHARTS -->
+          <div class="tab-panel active" id="tab-charts">
+            <div class="charts-grid">
+              <div class="chart-card wide">
+                <div class="chart-title">
+                  Episode Reward (smoothed)
+                  <span class="leg">
+                    <span class="leg-i"><span class="leg-l" style="background:#0d9f82"></span>Tabular Q</span>
+                    <span class="leg-i"><span class="leg-l" style="background:#e0355e"></span>DQN</span>
+                  </span>
+                </div>
+                <div class="chart-wrap"><canvas id="rewC" class="ch"></canvas></div>
+              </div>
+              <div class="chart-card">
+                <div class="chart-title">Steps / Episode</div>
+                <div class="chart-wrap"><canvas id="stpC" class="ch"></canvas></div>
+              </div>
+              <div class="chart-card">
+                <div class="chart-title">Exploration Rate ε</div>
+                <div class="chart-wrap"><canvas id="epsC" class="ch"></canvas></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- POLICY MAP -->
+          <div class="tab-panel" id="tab-policy">
+            <div class="policy-tab-inner">
+              <canvas id="policyC" width="272" height="272"></canvas>
+              <div class="policy-info">
+                <div class="pinfo-card">
+                  <div class="pinfo-title">Legend</div>
+                  <div class="pinfo-legend">
+                    <div class="pleg-row"><span class="pleg-sym" style="color:var(--tq)">■</span> Bright cell = high Q-value</div>
+                    <div class="pleg-row"><span class="pleg-sym">↑↓←→</span> Greedy policy action</div>
+                    <div class="pleg-row"><span class="pleg-sym" style="color:#f06060">⚠</span> Trap cell (−5 reward)</div>
+                    <div class="pleg-row"><span class="pleg-sym" style="color:var(--tq)">G</span> Goal (+10 reward)</div>
+                    <div class="pleg-row"><span class="pleg-sym" style="color:#555">✗</span> Wall (impassable)</div>
+                  </div>
+                </div>
+                <div class="pinfo-card">
+                  <div class="pinfo-title">How It Works</div>
+                  <div style="font-size:11px;color:var(--txt2);line-height:1.7">
+                    The policy map updates <em>every episode</em> as the Q-table improves.
+                    Early episodes show random arrows. As training progresses the agent learns
+                    the optimal path from S→G, visible as a coherent chain of arrows.
+                    Cell brightness reflects max Q-value confidence.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- LOG -->
+          <div class="tab-panel" id="tab-log">
+            <div class="log-wrap" id="epLog"></div>
+          </div>
+
+          <!-- ALGO COMPARISON -->
+          <div class="tab-panel" id="tab-algo">
+            <table class="algo-table">
+              <thead>
+                <tr>
+                  <th>Feature</th>
+                  <th style="color:var(--tq)">Tabular Q-Learning</th>
+                  <th style="color:var(--dqn)">Deep Q-Network</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td style="color:var(--txt2)">State Rep.</td><td style="color:var(--tq)">Discrete Q-table (S×A)</td><td style="color:var(--dqn)">FC neural net 25→64→32→4</td></tr>
+                <tr><td style="color:var(--txt2)">Memory</td><td style="color:var(--tq)">None beyond Q-table</td><td style="color:var(--dqn)">Replay buffer (3 000)</td></tr>
+                <tr><td style="color:var(--txt2)">Target Network</td><td style="color:var(--tq)">N/A</td><td style="color:var(--dqn)">Synced every 20 steps</td></tr>
+                <tr><td style="color:var(--txt2)">Learning Rate</td><td style="color:var(--tq)">α = 0.15</td><td style="color:var(--dqn)">lr = 0.002</td></tr>
+                <tr><td style="color:var(--txt2)">ε Decay</td><td style="color:var(--tq)">0.992 / episode</td><td style="color:var(--dqn)">0.992 / episode</td></tr>
+                <tr><td style="color:var(--txt2)">Convergence</td><td style="color:var(--tq)">⚡ Fast on small grids</td><td style="color:var(--dqn)">🐢 Slower, needs more data</td></tr>
+                <tr><td style="color:var(--txt2)">Scalability</td><td style="color:var(--tq)">❌ Exponential state growth</td><td style="color:var(--dqn)">✅ Generalises at scale</td></tr>
+                <tr><td style="color:var(--txt2)">Dependencies</td><td style="color:var(--tq)">numpy only</td><td style="color:var(--dqn)">numpy only (pure backprop)</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+        </div><!-- tab-panels -->
+      </div><!-- tab-shell -->
+
+    </div><!-- right -->
+  </div><!-- body -->
+</div><!-- app -->
+
+<script>
+// ══════════════════════════════════════════════
+//  TAB SWITCHING
+// ══════════════════════════════════════════════
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  // resize charts after show
+  if (name === 'charts') setTimeout(() => [rewC,stpC,epsC].forEach(c=>c.resize()), 50);
+}
+
+// ══════════════════════════════════════════════
+//  WEBSOCKET
+// ══════════════════════════════════════════════
+let ws = null;
+let currentGridSize = '5x5';
+
+// Maze is always generated by the Python server — no local copies needed.
+// The browser just renders whatever the server sends.
+function getTrapsFromGrid(grid){
+  const t=[];
+  grid.forEach((row,r)=>row.forEach((cell,c)=>{ if(cell===4)t.push([r,c]); }));
+  return t;
+}
+function getStartFromGrid(grid){
+  for(let r=0;r<grid.length;r++) for(let c=0;c<grid[r].length;c++) if(grid[r][c]===2) return [r,c];
+  return [0,0];
+}
+
+function resizeCanvases(rows, cols) {
+  const container = document.querySelector('.maze-section');
+  const available = Math.min(container.clientWidth - 28, 272);
+  const cellPx = Math.floor(available / Math.max(rows, cols));
+  const sz = cellPx * Math.max(rows, cols);
+  ['mazeC','policyC'].forEach(id=>{
+    const c=document.getElementById(id);
+    c.width=sz; c.height=sz;
+    c.style.width=sz+'px'; c.style.height=sz+'px';
+  });
+  return sz;
+}
+
+function applyMazeFromServer(grid, start) {
+  // Called after the server sends a maze message
+  GRID  = grid;
+  TRAPS = getTrapsFromGrid(grid);
+  resizeCanvases(grid.length, grid[0].length);
+  drawMaze('mazeC', grid, start, null, null);
+  drawPolicy(grid, null, null);
+}
+
+function drawLoadingMaze(size) {
+  // Draw a placeholder grid while waiting for server response
+  const dims = {'5x5':[5,5],'8x8':[8,8],'10x10':[10,10]};
+  const [rows,cols] = dims[size]||[5,5];
+  resizeCanvases(rows, cols);
+  const cvs=document.getElementById('mazeC'), ctx=cvs.getContext('2d');
+  const W=cvs.width,H=cvs.height,cw=W/cols,ch=H/rows;
+  ctx.clearRect(0,0,W,H);
+  // draw empty grid with pulsing label
+  for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+    ctx.fillStyle='#f0f4ff'; ctx.fillRect(c*cw+1,r*ch+1,cw-2,ch-2);
+  }
+  ctx.strokeStyle='rgba(180,190,220,.5)'; ctx.lineWidth=.5;
+  for(let r=0;r<=rows;r++){ctx.beginPath();ctx.moveTo(0,r*ch);ctx.lineTo(W,r*ch);ctx.stroke();}
+  for(let c=0;c<=cols;c++){ctx.beginPath();ctx.moveTo(c*cw,0);ctx.lineTo(c*cw,H);ctx.stroke();}
+  ctx.fillStyle='rgba(109,68,232,.35)'; ctx.font='bold 12px JetBrains Mono,monospace';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('generating…', W/2, H/2);
+  // blank policy canvas
+  const pc=document.getElementById('policyC'),pctx=pc.getContext('2d');
+  pctx.clearRect(0,0,pc.width,pc.height);
+}
+
+function setGridSize(size, btn) {
+  currentGridSize = size;
+  document.querySelectorAll('.btn-grid').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  // Stop any running training
+  if(ws && ws.readyState===1) ws.send(JSON.stringify({cmd:'stop'}));
+  document.getElementById('btnStop').disabled=true;
+  // Show loading state immediately
+  drawLoadingMaze(size);
+  // Ask server for a fresh random maze
+  if(ws && ws.readyState===1){
+    ws.send(JSON.stringify({cmd:'set_maze', grid_size:size}));
+  }
+  // Reset stats and charts
+  Object.keys(stats).forEach(a=>{ stats[a].s=0; stats[a].t=0; stats[a].steps=[]; });
+  rawR.tabular=[]; rawR.dqn=[]; labels=[];
+  [rewC,stpC,epsC].forEach(c=>{ c.data.datasets.forEach(d=>d.data=[]); c.data.labels=[]; c.update('none'); });
+  ['m-tq-sr','m-tq-st','m-dq-sr','m-dq-st'].forEach(id=>document.getElementById(id).textContent='—');
+  ['m-tq-ep','m-dq-ep'].forEach(id=>document.getElementById(id).textContent='0');
+  document.getElementById('progWrap').style.visibility='hidden';
+  document.getElementById('tStatus').textContent='IDLE';
+  document.getElementById('tStatus').style.color='';
+  document.getElementById('epLog').innerHTML='';
+}
+function connect() {
+  ws = new WebSocket('ws://127.0.0.1:8766');
+  ws.onopen  = () => {
+    setConn('ok');
+    ['btnTQ','btnDQN'].forEach(id=>document.getElementById(id).disabled=false);
+    // Request a fresh maze for the currently selected size
+    ws.send(JSON.stringify({cmd:'set_maze', grid_size:currentGridSize}));
+  };
+  ws.onclose = () => { setConn('err'); ['btnTQ','btnDQN','btnStop'].forEach(id=>document.getElementById(id).disabled=true); setTimeout(connect,3000); };
+  ws.onerror = () => setConn('err');
+  ws.onmessage = e => handleMsg(JSON.parse(e.data));
+}
+function setConn(s) {
+  const b=document.getElementById('connBadge'), t=document.getElementById('connTxt');
+  b.className='conn'+(s==='ok'?' ok':s==='err'?' err':'');
+  t.textContent=s==='ok'?'Python server connected':s==='err'?'Server offline — retrying…':'Connecting…';
+}
+function sendStop() {
+  if(ws&&ws.readyState===1) ws.send(JSON.stringify({cmd:'stop'}));
+  document.getElementById('btnStop').disabled=true;
+}
+function startTraining(agent) {
+  if(!ws||ws.readyState!==1) return;
+  const eps=parseInt(document.getElementById('epSel').value);
+  resetAgentData(agent,eps);
+  document.getElementById('btnStop').disabled=false;
+  ws.send(JSON.stringify({cmd:'train', agent, episodes:eps, grid_size:currentGridSize}));
+}
+
+// ══════════════════════════════════════════════
+//  MAZE DRAWING
+// ══════════════════════════════════════════════
+let GRID=null;
+let TRAPS=[];  // updated when maze message arrives
+const MCOL={0:'#f8faff',1:'#d0d8ee',2:'#e0f7f2',3:'#e0fae8',4:'#fde8e8'};
+
+function drawMaze(id,grid,agentPos,trail,qv) {
+  const cvs=document.getElementById(id), ctx=cvs.getContext('2d');
+  const W=cvs.width,H=cvs.height,rows=grid.length,cols=grid[0].length;
+  const cw=W/cols,ch=H/rows;
+  ctx.clearRect(0,0,W,H);
+
+  grid.forEach((row,r)=>row.forEach((cell,c)=>{
+    const x=c*cw,y=r*ch,mx=x+cw/2,my=y+ch/2;
+    ctx.fillStyle=MCOL[cell]??'#221d35';
+    ctx.fillRect(x+1,y+1,cw-2,ch-2);
+
+    if(qv&&cell!==1){
+      const v=Math.max(0,Math.min(1,(qv[r][c]+1)/11));
+      ctx.fillStyle=`rgba(13,159,130,${v*.18})`;
+      ctx.fillRect(x+1,y+1,cw-2,ch-2);
+    }
+    if(cell===1){ctx.fillStyle='#bfc8e0';ctx.fillRect(x+1,y+1,cw-2,ch-2);}
+
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    if(cell===2){ctx.fillStyle='#0d9f82';ctx.font=`bold ${ch*.38}px Orbitron`;ctx.fillText('S',mx,my+1);}
+    if(cell===3){
+      const g=ctx.createRadialGradient(mx,my,2,mx,my,cw/2);
+      g.addColorStop(0,'rgba(13,159,100,.35)');g.addColorStop(1,'transparent');
+      ctx.fillStyle=g;ctx.fillRect(x,y,cw,ch);
+      ctx.fillStyle='#16a34a';ctx.font=`bold ${ch*.42}px Orbitron`;ctx.fillText('G',mx,my+1);
+    }
+    if(cell===4){
+      const g=ctx.createRadialGradient(mx,my,2,mx,my,cw/2);
+      g.addColorStop(0,'rgba(220,50,50,.3)');g.addColorStop(1,'transparent');
+      ctx.fillStyle=g;ctx.fillRect(x,y,cw,ch);
+      ctx.font=`${ch*.48}px Arial`;ctx.fillText('⚠',mx,my+1);
+    }
+  }));
+
+  if(trail&&trail.length>1) trail.forEach((p,i)=>{
+    const a=0.06+0.28*(i/trail.length);
+    ctx.beginPath();ctx.arc(p[1]*cw+cw/2,p[0]*ch+ch/2,cw*.12,0,Math.PI*2);
+    ctx.fillStyle=`rgba(13,159,130,${a})`;ctx.fill();
+  });
+
+  if(agentPos){
+    const ax=agentPos[1]*cw+cw/2,ay=agentPos[0]*ch+ch/2;
+    const g=ctx.createRadialGradient(ax,ay,1,ax,ay,cw*.32);
+    g.addColorStop(0,'rgba(217,119,6,1)');g.addColorStop(.5,'rgba(251,160,20,.75)');g.addColorStop(1,'transparent');
+    ctx.beginPath();ctx.arc(ax,ay,cw*.32,0,Math.PI*2);ctx.fillStyle=g;ctx.fill();
+    ctx.beginPath();ctx.arc(ax,ay,cw*.1,0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill();
+  }
+
+  ctx.strokeStyle='rgba(180,190,220,.6)';ctx.lineWidth=.5;
+  for(let r=0;r<=rows;r++){ctx.beginPath();ctx.moveTo(0,r*ch);ctx.lineTo(W,r*ch);ctx.stroke();}
+  for(let c=0;c<=cols;c++){ctx.beginPath();ctx.moveTo(c*cw,0);ctx.lineTo(c*cw,H);ctx.stroke();}
+}
+
+function drawPolicy(grid,policy,qv){
+  const cvs=document.getElementById('policyC'),ctx=cvs.getContext('2d');
+  const W=cvs.width,H=cvs.height,rows=grid.length,cols=grid[0].length;
+  const cw=W/cols,ch=H/rows;
+  ctx.clearRect(0,0,W,H);
+
+  grid.forEach((row,r)=>row.forEach((cell,c)=>{
+    const x=c*cw,y=r*ch,mx=x+cw/2,my=y+ch/2;
+    ctx.fillStyle=cell===1?'#bfc8e0':'#f8faff';
+    ctx.fillRect(x+1,y+1,cw-2,ch-2);
+    if(qv&&cell!==1){const v=Math.max(0,Math.min(1,(qv[r][c]+1)/11));ctx.fillStyle=`rgba(13,159,130,${v*.2})`;ctx.fillRect(x+1,y+1,cw-2,ch-2);}
+
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    if(cell===1){ctx.fillStyle='#9aa5c2';ctx.font=`${ch*.38}px Arial`;ctx.fillText('✗',mx,my);}
+    else if(cell===3){ctx.fillStyle='#16a34a';ctx.font=`bold ${ch*.42}px Orbitron`;ctx.fillText('G',mx,my+1);}
+    else if(cell===4){ctx.font=`${ch*.48}px Arial`;ctx.fillText('⚠',mx,my+1);}
+    else if(policy){
+      const act=policy[r][c];
+      if(act!=='·'){
+        const v=qv?Math.max(0,Math.min(1,(qv[r][c]+1)/11)):.5;
+        ctx.fillStyle=`rgba(13,100,180,${.3+v*.65})`;
+        ctx.font=`bold ${ch*.52}px Arial`;ctx.fillText(act,mx,my+1);
+      }
+    }
+  }));
+
+  ctx.strokeStyle='rgba(180,190,220,.6)';ctx.lineWidth=.5;
+  for(let r=0;r<=rows;r++){ctx.beginPath();ctx.moveTo(0,r*ch);ctx.lineTo(W,r*ch);ctx.stroke();}
+  for(let c=0;c<=cols;c++){ctx.beginPath();ctx.moveTo(c*cw,0);ctx.lineTo(c*cw,H);ctx.stroke();}
+}
+
+// ══════════════════════════════════════════════
+//  CHARTS
+// ══════════════════════════════════════════════
+const CO = {
+  responsive:true, maintainAspectRatio:false, animation:false,
+  plugins:{ legend:{display:false}, tooltip:{
+    backgroundColor:'rgba(255,255,255,.97)', borderColor:'rgba(180,190,220,.8)',
+    borderWidth:1, titleColor:'#6d44e8', bodyColor:'#3d4466',
+    titleFont:{family:"'JetBrains Mono'"}, bodyFont:{family:"'JetBrains Mono'",size:10}, padding:8
+  }},
+  scales:{
+    x:{ticks:{color:'#7a84aa',font:{family:"'JetBrains Mono'",size:8},maxTicksLimit:10},grid:{color:'rgba(210,215,235,.7)'},border:{color:'rgba(210,215,235,.9)'}},
+    y:{ticks:{color:'#7a84aa',font:{family:"'JetBrains Mono'",size:8}},grid:{color:'rgba(210,215,235,.7)'},border:{color:'rgba(210,215,235,.9)'}}
+  }
+};
+
+function mkC(id,ds,yX){
+  return new Chart(document.getElementById(id).getContext('2d'),{
+    type:'line', data:{labels:[],datasets:ds},
+    options:{...CO,scales:{...CO.scales,y:{...CO.scales.y,...(yX||{})}}}
+  });
+}
+const rewC=mkC('rewC',[
+  {label:'TQ', data:[],borderColor:'#0d9f82',borderWidth:2,pointRadius:0,tension:.4,backgroundColor:'rgba(13,159,130,.08)',fill:true},
+  {label:'DQN',data:[],borderColor:'#e0355e',borderWidth:2,pointRadius:0,tension:.4,backgroundColor:'rgba(224,53,94,.06)',fill:true},
+]);
+const stpC=mkC('stpC',[
+  {label:'TQ', data:[],borderColor:'#0d9f82',borderWidth:1.5,pointRadius:0,tension:.4},
+  {label:'DQN',data:[],borderColor:'#e0355e',borderWidth:1.5,pointRadius:0,tension:.4},
+]);
+const epsC=mkC('epsC',[
+  {label:'TQ', data:[],borderColor:'#6d44e8',borderWidth:1.5,pointRadius:0,tension:.1},
+  {label:'DQN',data:[],borderColor:'#d97706',borderWidth:1.2,pointRadius:0,tension:.1,borderDash:[4,3]},
+],{min:0,max:1.05});
+
+const DS={tabular:0,dqn:1}, rawR={tabular:[],dqn:[]};
+let labels=[], maxEps=0;
+
+function smooth(arr,w=12){const s=arr.slice(Math.max(0,arr.length-w));return s.reduce((a,b)=>a+b,0)/s.length;}
+
+function resetAgentData(agent,eps){
+  maxEps=eps; const i=DS[agent]; rawR[agent]=[];
+  [rewC,stpC,epsC].forEach(c=>{c.data.datasets[i].data=[];});
+  if(!rawR.tabular.length&&!rawR.dqn.length){labels=[];[rewC,stpC,epsC].forEach(c=>c.data.labels=labels);}
+  const fill=document.getElementById('progFill');
+  fill.className='prog-fill'+(agent==='dqn'?' dqn':'');
+  document.getElementById('progWrap').style.visibility='visible';
+  document.getElementById('progFrac').textContent=`0 / ${eps}`;
+  fill.style.width='0%';
+  [rewC,stpC,epsC].forEach(c=>c.update('none'));
+}
+
+function pushPt(agent,ep,reward,steps,eps){
+  const i=DS[agent]; rawR[agent].push(reward);
+  if(ep>labels.length){labels.push(ep);[rewC,stpC,epsC].forEach(c=>c.data.labels=labels);}
+  const o=1-i;
+  [rewC,stpC,epsC].forEach(c=>{while(c.data.datasets[o].data.length<rawR[agent].length-1)c.data.datasets[o].data.push(null);});
+  rewC.data.datasets[i].data.push(smooth(rawR[agent]));
+  stpC.data.datasets[i].data.push(steps);
+  epsC.data.datasets[i].data.push(eps);
+  if(ep%8===0||ep===maxEps)[rewC,stpC,epsC].forEach(c=>c.update('none'));
+}
+
+// ══════════════════════════════════════════════
+//  STATS
+// ══════════════════════════════════════════════
+const stats={tabular:{s:0,t:0,steps:[]},dqn:{s:0,t:0,steps:[]}};
+function updateMetrics(agent,success,steps){
+  const st=stats[agent]; st.t++; if(success){st.s++;st.steps.push(steps);}
+  const rate=st.t?(st.s/st.t*100).toFixed(1)+'%':'—';
+  const avg=st.steps.length?Math.round(st.steps.slice(-50).reduce((a,b)=>a+b,0)/Math.min(50,st.steps.length)):'—';
+  if(agent==='tabular'){document.getElementById('m-tq-sr').textContent=rate;document.getElementById('m-tq-st').textContent=avg;document.getElementById('m-tq-ep').textContent=st.t;}
+  else{document.getElementById('m-dq-sr').textContent=rate;document.getElementById('m-dq-st').textContent=avg;document.getElementById('m-dq-ep').textContent=st.t;}
+}
+
+// ══════════════════════════════════════════════
+//  LOG
+// ══════════════════════════════════════════════
+function addLog(agent,ep,total,reward,steps,success,pos){
+  const log=document.getElementById('epLog');
+  const isTrap=pos&&TRAPS.some(t=>t[0]===pos[0]&&t[1]===pos[1]);
+  const cls=success?'ok':isTrap?'trap':'fail';
+  const tag=agent==='tabular'?'TQ ':'DQN';
+  const out=success?'✓ GOAL':isTrap?'⚠ TRAP':'✗ TIMEOUT';
+  const d=document.createElement('div');
+  d.className='ll '+cls;
+  d.textContent=`[${tag}] ep ${String(ep).padStart(4)} / ${String(total).padStart(4)}  r=${String(reward.toFixed(2)).padStart(8)}  steps=${String(steps).padStart(4)}  ${out}`;
+  log.appendChild(d);
+  while(log.children.length>300)log.removeChild(log.firstChild);
+  log.scrollTop=log.scrollHeight;
+}
+
+// ══════════════════════════════════════════════
+//  MESSAGE HANDLER
+// ══════════════════════════════════════════════
+function handleMsg(data){
+  if(data.type==='maze'){
+    applyMazeFromServer(data.grid, data.start);
+    return;
+  }
+
+  if(data.type==='episode'){
+    const {agent,ep,total,reward,steps,success,epsilon,path,pos,policy,q_values,grid_size,goal,traps}=data;
+
+    // If server is training on a different grid size than what browser shows, resync
+    if(grid_size && grid_size !== currentGridSize){
+      currentGridSize = grid_size;
+      document.querySelectorAll('.btn-grid').forEach(b=>{
+        b.classList.toggle('active', b.dataset.size===grid_size);
+      });
+    }
+    // Always sync TRAPS from server message (authoritative)
+    if(traps) TRAPS=traps;
+    document.getElementById('progLbl').textContent=`${agent==='tabular'?'Tabular Q':'DQN'} — ep ${ep}`;
+    document.getElementById('progFrac').textContent=`${ep} / ${total}`;
+    document.getElementById('progFill').style.width=(ep/total*100)+'%';
+
+    document.getElementById('tAgent').textContent=agent==='tabular'?'TQ':'DQN';
+    document.getElementById('tPos').textContent=pos?`[${pos[0]},${pos[1]}]`:'—';
+    document.getElementById('tStep').textContent=steps;
+    document.getElementById('tEp').textContent=`${ep}/${total}`;
+    document.getElementById('tEps').textContent=epsilon;
+    const st=document.getElementById('tStatus');
+    const isTrap=pos&&TRAPS.some(t=>t[0]===pos[0]&&t[1]===pos[1]);
+    st.textContent=success?'GOAL ✓':isTrap?'TRAP ⚠':'TIME';
+    st.style.color=success?'var(--tq)':isTrap?'var(--yel)':'var(--dqn)';
+
+    if(GRID){
+      drawMaze('mazeC',GRID,pos,path?path.slice(-25):null,agent==='tabular'?q_values:null);
+      if(agent==='tabular'&&policy)drawPolicy(GRID,policy,q_values);
+    }
+
+    pushPt(agent,ep,reward,steps,epsilon);
+    updateMetrics(agent,success,steps);
+    if(ep<=50||ep%5===0||ep===total)addLog(agent,ep,total,reward,steps,success,pos);
+    return;
+  }
+
+  if(data.type==='done'){
+    document.getElementById('progLbl').textContent=`✓ ${data.agent==='tabular'?'Tabular Q':'DQN'} complete`;
+    document.getElementById('btnStop').disabled=true;
+    const d=document.createElement('div'); d.className='ll sys';
+    d.textContent=`═══ ${data.agent.toUpperCase()} TRAINING COMPLETE ═══`;
+    document.getElementById('epLog').appendChild(d);
+    document.getElementById('epLog').scrollTop=99999;
+    [rewC,stpC,epsC].forEach(c=>c.update());
+  }
+}
+
+// ══════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════
+connect();
+drawLoadingMaze('5x5');  // show placeholder until server responds
+</script>
+</body>
+</html>
